@@ -11,6 +11,7 @@ def getDistance(x0,y0,x1,y1):
 def getAngleBetweenTwoPoints(x1,y1,x2,y2):
     dy = y2-y1
     dx = x2-x1
+    abs_dy_dx = abs(dy/dx)
     if dx == 0:
         if dy >= 0:
             result = math.pi/2
@@ -18,23 +19,100 @@ def getAngleBetweenTwoPoints(x1,y1,x2,y2):
             result = -math.pi/2
     elif dx>0:
         if dy>0:
-            result = math.atan(dy/dx)
+            result = math.atan(abs_dy_dx)
         else:
-            result = -math.atan(dy/dx)
+            result = -math.atan(abs_dy_dx)
     else:
         if dy>=0:
-            result = math.pi-math.atan(-dy/dx)
+            result = math.pi-math.atan(abs_dy_dx)
         else:
-            result = math.pi+math.atan(dy/dx)
+            result = math.pi+math.atan(abs_dy_dx)
     return result
 
-def determineTurnAngle(faceAngle, targetAngle):
-    resAngle = faceAngle-targetAngle
-    if abs(resAngle)>=math.pi/2:
+def turnAngle(faceAngle, targetAngle):
+    resAngle = targetAngle-faceAngle
+    if resAngle <0:
+        resAngle = resAngle+2*math.pi
+    if resAngle>=math.pi:
         resAngle = -1*(2*math.pi-resAngle)
     return resAngle
 
+def minDistPoint(x,y,L):
+    minDist = None
+    minPoint = None
+    for point in L:
+        pX, pY = point
+        dist = getDistance(pX, pY, x, y)
+        if minDist == None or dist < minDist:
+            minDist = dist
+            minPoint = point
+    return minPoint
+
 #######################################################################################################
+
+#######################################################################################################
+class rectangle(object):
+    def __init__(self, x1, y1, x2, y2, fill):
+        self.x1 = x1
+        self.y1 = y1
+        self.x2 = x2
+        self.y2 = y2
+        self.fill = fill
+    def draw(self, canvas):
+        canvas.create_rectangle(self.x1, self.y1, self.x2, self.y2,
+                 fill = self.fill)
+    def viablePoint(self, startX, startY, intX, intY, endX, endY):
+        minX = min(startX, endX)
+        maxX = max(startX, endX)
+        minY = min(startY, endY)
+        maxY = max(startY, endY)
+
+        inRectangle = False
+        if intX >= self.x1 and intX<=self.x2 and intY >= self.y1 and intY <= self.y2:
+            inRectangle = True
+
+        if inRectangle and intX <= maxX and intX >= minX and intY <= maxY and intY >= minY:
+            return intX, intY
+        else:
+            return None
+
+
+    def collisionCheck(self, x, y, x2, y2, length):
+        LLInt = None
+        RLInt = None
+        BLInt = None
+        TLInt = None
+        if x == x2:
+            if x >= self.x1 and x <= self.x2:
+                TLInt = self.viablePoint(x,y,x, self.y1,x2,y2)
+                BLInt = self.viablePoint(x,y,x, self.y2,x2,y2)
+        elif y == y2:
+            if y>=self.y1 and y<= self.y2:
+                LLInt = self.viablePoint(x,y,self.x1, y,x2,y2)
+                RLInt = self.viablePoint(x,y,self.x2, y,x2,y2)
+        else:
+            slope = (y2-y)/(x2-x)
+            b = y-slope*x
+
+            #### Top Line
+            intX = (self.y1-b)/slope
+            TLInt = self.viablePoint(x,y,intX,self.y1,x2,y2)
+
+            #### Left Line
+            intY = slope*self.x1 + b
+            LLInt = self.viablePoint(x,y,self.x1, intY,x2,y2)
+
+            #### Right Line
+            intY = slope*self.x2 + b
+            RLInt = self.viablePoint(x,y,self.x2, intY,x2,y2)
+
+            #### Bottom Line
+            intX = (self.y2-b)/slope
+            BLInt = self.viablePoint(x,y,intX, self.y2,x2,y2)
+
+        allViablePoints = [x for x in [TLInt, LLInt, RLInt, BLInt] if x!= None]
+        return minDistPoint(x,y, allViablePoints)
+
 
 class Entity(object):
     def __init__(self, fill,speed):
@@ -62,6 +140,7 @@ class Player(Entity):
     def __init__(self, fill,speed):
         super().__init__(fill,speed)
         self.position = (200,200)
+        self.stealthed = True
 
 class Enemy(Entity):
     def __init__(self,fill, pathType, path,speed):
@@ -86,11 +165,31 @@ class Enemy(Entity):
         dy = random.randint(-1,1)
         direction = dx,dy
         self.move(direction)
+    def castVision(self,app, canvas):
+        numLines = 40
+        visionLength = 100
+        anglePerLine = math.pi/(4*numLines)
+        startAngle = self.faceAngle-math.pi/8
+        x1, y1 = self.position
+        for i in range(numLines):
+            newAngle = startAngle+anglePerLine*i
+            x2 = x1 + visionLength * math.cos(newAngle)
+            y2=y1+visionLength*math.sin(newAngle)
+            endPoints = []
+            for item in app.obstacleDictionary[app.level]:
+                EP = item.collisionCheck(x1, y1, x2, y2, visionLength)
+                if EP != None:
+                    endPoints.append(EP)
+            if endPoints == []:
+                canvas.create_line(x1,y1,x2,y2,width = 2, fill = "yellow")
+            else:
+                x2, y2 = minDistPoint(x1,y1,endPoints)
+                canvas.create_line(x1,y1,x2,y2, width= 2, fill = "yellow")
+
     def determineTurnAngle(self):
         x1,y1 = self.position
         tempDPath = self.dPath
         nextPointIndex = self.currentPointIndex + tempDPath
-        print(f"currIndex: {self.currentPointIndex}, lenPath: {len(self.path)}")
         if self.pathType == "wrapped":
             if self.currentPointIndex == 0:
                 nextPointIndex = 1
@@ -98,11 +197,9 @@ class Enemy(Entity):
                 nextPointIndex = len(self.path)-2        
         if self.pathType == "looped" and self.currentPointIndex == len(self.path)-1:
             nextPointIndex = 0
-        print(f"nextIndex:{nextPointIndex}")
         x2,y2 = self.path[nextPointIndex]
         rawTurnAngle = getAngleBetweenTwoPoints(x1,y1,x2,y2)
-        print(f"Enemy: {self.fill}, faceAngle, rawAngle: {self.faceAngle},{rawTurnAngle}")
-        self.turnAngle = determineTurnAngle(self.faceAngle, rawTurnAngle)
+        self.turnAngle = turnAngle(self.faceAngle, rawTurnAngle)
         self.turnAngleUnknown = False
     def turn(self,dAngle):
         if(self.turnCount >= self.turnFrames):
@@ -156,7 +253,7 @@ class Enemy(Entity):
         
         
 def timerFired(app):
-    for enemy in app.enemies:
+    for enemy in app.enemyDictionary[app.level]:
         enemy.followPath()
 
 
@@ -165,25 +262,30 @@ def mousePressed(app, event):
 
 def appStarted(app):
     app.player = Player("blue",10)
-    app.timerDelay = 50
-    app.enemies = []
-    app.enemies.append(Enemy("red", "looped",
+    app.level = 0
+    app.timerDelay = 60
+
+    #################    Level Dictionaries ####################################
+
+    app.enemyDictionary = {0: [], 1: []}
+    app.obstacleDictionary = {0: [], 1:[]}
+    ####   Enemies 
+    # Level 0
+    app.enemyDictionary[0].append(Enemy("red", "looped",
         [(50,47), (303,47), (502,191), (289, 335), (62, 351)],8))
-    app.enemies.append(Enemy("green", "wrapped",
+    app.enemyDictionary[0].append(Enemy("green", "wrapped",
         [(114,89),(320,180),(143,264),(338,358),(498,231),(408,164),(506,79)],
             8))
+
+    ####  Obstacles [shape, [coordinates], color]
+    app.obstacleDictionary[0].append(rectangle(50,50,200,200,"blue"))
+    app.obstacleDictionary[0].append(rectangle(250,10,350,100,"green"))
+
+
+
 def drawVisionCones(app,canvas):
-    numLines = 40
-    visionLength = 100
-    anglePerLine = math.pi/(4*numLines)
-    for enemy in app.enemies:
-        startAngle = enemy.faceAngle-math.pi/8
-        for i in range(numLines):
-            x1, y1 = enemy.position
-            newAngle = startAngle+anglePerLine*i
-            x2 = x1+visionLength*math.cos(newAngle)
-            y2=y1+visionLength*math.sin(newAngle)
-            canvas.create_line(x1,y1,x2,y2,width = 2, fill = "yellow")
+    for enemy in app.enemyDictionary[app.level]:
+        enemy.castVision(app, canvas)
             
 
 def keyPressed(app, event):
@@ -199,10 +301,16 @@ def keyPressed(app, event):
     if direction != None:
         app.player.move(direction)
 
+def drawObstacles(app, canvas):
+    for item in app.obstacleDictionary[app.level]:
+        item.draw(canvas)
+
+
 def redrawAll(app, canvas):
+    drawObstacles(app, canvas)
     drawVisionCones(app,canvas)
 
-    for enemy in app.enemies:
+    for enemy in app.enemyDictionary[app.level]:
         enemy.draw(canvas)
-        app.player.draw(canvas)
+    app.player.draw(canvas)
 runApp(width=600, height=400)
