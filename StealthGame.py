@@ -145,6 +145,7 @@ class Player(Entity):
 class Enemy(Entity):
     def __init__(self,fill, pathType, path,speed):
         super().__init__(fill,speed)
+        self.isDetected = False
         self.face = 0
         self.path = path
         self.pathType = pathType
@@ -160,6 +161,8 @@ class Enemy(Entity):
         x1,y1 = self.position
         x2,y2 = self.path[1]
         self.faceAngle = getAngleBetweenTwoPoints(x1,y1,x2,y2)
+    def checkVision(self, player):
+        pass
     def moveRandomly(self):
         dx = random.randint(-1,1)
         dy = random.randint(-1,1)
@@ -171,6 +174,11 @@ class Enemy(Entity):
         anglePerLine = math.pi/(4*numLines)
         startAngle = self.faceAngle-math.pi/8
         x1, y1 = self.position
+        playerX, playerY = app.player.position
+        playerDetectSet = set()
+        playerInRange = False
+        if getDistance(playerX, playerY, x1, y1) <= visionLength + app.player.radius:
+            playerInRange = True
         for i in range(numLines):
             newAngle = startAngle+anglePerLine*i
             x2 = x1 + visionLength * math.cos(newAngle)
@@ -185,6 +193,30 @@ class Enemy(Entity):
             else:
                 x2, y2 = minDistPoint(x1,y1,endPoints)
                 canvas.create_line(x1,y1,x2,y2, width= 2, fill = "yellow")
+            if playerInRange:
+                playerDetectSet.add(self.checkForPlayerInRay(x2, y2, app))
+        if True in playerDetectSet:
+            return True
+        else:
+            return False
+            
+
+    def checkForPlayerInRay(self, x2, y2, app):
+        x1,y1 = self.position
+        angle = getAngleBetweenTwoPoints(x1,y1,x2,y2)
+        x, y = x1, y1
+        totalDistance = getDistance(x1,y1,x2,y2)
+        increment = 3
+        while(getDistance(x1,y1,x,y)<=totalDistance):
+            x1+= increment*math.cos(angle)
+            y1+= increment*math.sin(angle)
+            x2, y2 = app.player.position
+            if getDistance(x1,y1,x2, y2) <= app.player.radius:
+                return True
+        return False
+
+        
+        
 
     def determineTurnAngle(self):
         x1,y1 = self.position
@@ -271,11 +303,14 @@ def appStarted(app):
     app.obstacleDictionary = {0: [], 1:[]}
     ####   Enemies 
     # Level 0
+    '''app.enemyDictionary[0].append(Enemy("red", "looped",
+        [(50,47), (303,47), (502,191), (289, 335), (62, 351)],8))'''
     app.enemyDictionary[0].append(Enemy("red", "looped",
-        [(50,47), (303,47), (502,191), (289, 335), (62, 351)],8))
-    app.enemyDictionary[0].append(Enemy("green", "wrapped",
+        [(41,33),(537, 33)],8))
+    app.enemyDictionary[0].append(Enemy("Blue","wrapped",[(41,343),(537,343)],8))
+    '''app.enemyDictionary[0].append(Enemy("green", "wrapped",
         [(114,89),(320,180),(143,264),(338,358),(498,231),(408,164),(506,79)],
-            8))
+            8))'''
 
     ####  Obstacles [shape, [coordinates], color]
     app.obstacleDictionary[0].append(rectangle(50,50,200,200,"blue"))
@@ -283,9 +318,20 @@ def appStarted(app):
 
 
 
-def drawVisionCones(app,canvas):
+def drawVisionCones(app,canvas):                            #   MVC VIOLATION
+    playerDetectSet = set()
+    app.player.isDetected = False
     for enemy in app.enemyDictionary[app.level]:
-        enemy.castVision(app, canvas)
+        playerDetectSet.add(enemy.castVision(app, canvas))
+    if True in playerDetectSet:
+        app.player.isDetected = True
+    else:
+        app.player.isDetected = False
+    if app.player.isDetected:
+        app.player.fill = "green"
+    else:
+        app.player.fill = "blue"
+    
             
 
 def keyPressed(app, event):
