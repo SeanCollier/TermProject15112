@@ -146,6 +146,8 @@ class Player(Entity):
 class Enemy(Entity):
     def __init__(self,fill, pathType, path,speed):
         super().__init__(fill,speed)
+        self.state = "patrolling"
+        self.chaseCount = 0
         self.isDetected = False
         self.face = 0
         self.path = path
@@ -155,16 +157,24 @@ class Enemy(Entity):
         self.position = path[0]
         self.dPath = 1
         self.turnAngleUnknown = True
-        self.turnFrames = 8
+        self.turnSpeed = math.pi/180 * 10
         self.turnAngle = 0
         self.turnComplete = False
-        self.turnCount=0
+        self.turnCount = 0
+        self.rawTurnAngle = 0
+        self.chaseMoveDone = True
+        self.LKPlayerPos = (0,0)
+        self.LKPlayerSpeed = (0,0)
+
         x1,y1 = self.position
         x2,y2 = self.path[1]
-        self.faceAngle = getAngleBetweenTwoPoints(x1,y1,x2,y2)
+        self.faceAngle = 0
         self.visionEndpoints = []
-    def checkVision(self, player):
-        pass
+    def behave(self,app):
+        if self.state == "patrolling":
+            self.followPath(app)
+        elif self.state == "chasing":
+            self.chase(app)
     def moveRandomly(self):
         dx = random.randint(-1,1)
         dy = random.randint(-1,1)
@@ -230,20 +240,49 @@ class Enemy(Entity):
         if self.pathType == "looped" and self.currentPointIndex == len(self.path)-1:
             nextPointIndex = 0
         x2,y2 = self.path[nextPointIndex]
-        rawTurnAngle = getAngleBetweenTwoPoints(x1,y1,x2,y2)
-        self.turnAngle = turnAngle(self.faceAngle, rawTurnAngle)
+        self.rawTurnAngle = getAngleBetweenTwoPoints(x1,y1,x2,y2)
+        self.turnAngle = turnAngle(self.faceAngle, self.rawTurnAngle)
         self.turnAngleUnknown = False
-    def turn(self,dAngle):
-        if(self.turnCount >= self.turnFrames):
-            self.turnCount=0
-            self.turnComplete = True
-            return
-        else:
-            self.turnCount += 1
-            self.faceAngle += dAngle
-            self.faceAngle %= 2*math.pi
 
-    def followPath(self):
+    def turn(self,dAngle):
+        if self.rawTurnAngle < 0:
+            self.rawTurnAngle += 2*math.pi
+        if self.faceAngle < 0:
+            self.faceAngle += 2*math.pi
+        self.faceAngle += dAngle
+        turnAngleModded = self.turnAngle % (2*math.pi)
+        self.faceAngle %= (2*math.pi)
+        self.rawTurnAngle %= (2*math.pi)
+        if abs(self.rawTurnAngle - self.faceAngle) <= 0.1:
+            self.turnComplete = True
+    
+    def move(self, px, py, distance):
+        x,y = self.position
+        if distance <= self.speed:
+                movement = distance
+        else:
+            movement = self.speed
+        xDist = px-x
+        yDist = py-y
+        cos = xDist/distance
+        sin = yDist/distance
+
+        dx = cos*movement
+        dy = sin*movement
+
+        x+= dx
+        y+= dy
+        self.position = x,y
+
+        
+    
+    ############################# Behavioral functions #########################
+
+    def followPath(self, app):
+        if self.castVision(app):
+            self.state="chasing"
+            self.chaseCount = 0
+            return
         point = self.path[self.currentPointIndex]
         x,y = self.position
         px, py = point
@@ -253,7 +292,13 @@ class Enemy(Entity):
             if(self.turnAngleUnknown):
                 self.determineTurnAngle()
             elif(not self.turnComplete):
-                dAngle = self.turnAngle/self.turnFrames
+                if abs(self.turnAngle) <= abs(self.turnSpeed):
+                    dAngle = abs(self.turnAngle-self.faceAngle)
+                else:
+                    dAngle = self.turnSpeed
+                if self.turnAngle != 0:
+                    if dAngle/self.turnAngle <= 0:
+                        dAngle *= -1
                 self.turn(dAngle)
             else:
                 self.currentPointIndex += self.dPath
@@ -265,29 +310,37 @@ class Enemy(Entity):
         else:
             self.turnAngleUnknown = True
             self.turnComplete = False
-            if distance <= self.speed:
-                movement = distance
+            self.move(px, py, distance)
+        
+
+    def chase(self, app):
+        if self.castVision(app):
+            x1,y1 = self.position
+            x2,y2 = app.player.position
+            self.targetPosition = x2,y2
+            self.rawTurnAngle = getAngleBetweenTwoPoints(x1,y1,x2,y2)
+            self.turnAngle = turnAngle(self.faceAngle, self.rawTurnAngle)
+            self.chaseTurnDone = False
+            if abs(self.turnAngle) < self.turnSpeed:
+                dAngle = self.turnSpeed - abs(self.turnAngle)
             else:
-                movement = self.speed
-            xDist = px-x
-            yDist = py-y
-            cos = xDist/distance
-            sin = yDist/distance
-
-            dx = cos*movement
-            dy = sin*movement
-
-            x+= dx
-            y+= dy
-            self.position = x,y
-
-        
-        
+                dAngle = self.turnSpeed
+            if self.turnAngle < 0:
+                dAngle = -1*dAngle
+            self.turn(dAngle)
+            
+            x1,y1 = self.position
+            x2,y2 = self.targetPosition
+            maxDistance = self.radius + 5
+            distance = getDistance(x1,y1,x2,y2)
+            if not distance <= maxDistance:
+                self.move(x2,y2, distance)
+            self.chaseCount += 1
         
 def timerFired(app):
     determineVisionCones(app)
     for enemy in app.enemyDictionary[app.level]:
-        enemy.followPath()
+        enemy.behave(app)
 
 
 def mousePressed(app, event):
@@ -304,14 +357,14 @@ def appStarted(app):
     app.obstacleDictionary = {0: [], 1:[]}
     ####   Enemies 
     # Level 0
-    '''app.enemyDictionary[0].append(Enemy("red", "looped",
-        [(50,47), (303,47), (502,191), (289, 335), (62, 351)],8))'''
     app.enemyDictionary[0].append(Enemy("red", "looped",
-        [(41,33),(537, 33)],8))
-    app.enemyDictionary[0].append(Enemy("Blue","wrapped",[(41,343),(537,343)],8))
-    '''app.enemyDictionary[0].append(Enemy("green", "wrapped",
+        [(50,47), (303,47), (502,191), (289, 335), (62, 351)],8))
+    #app.enemyDictionary[0].append(Enemy("red", "looped",
+    #    [(41,33),(537, 33)],8))
+    #app.enemyDictionary[0].append(Enemy("Blue","wrapped",[(41,343),(537,343)],8))
+    app.enemyDictionary[0].append(Enemy("green", "wrapped",
         [(114,89),(320,180),(143,264),(338,358),(498,231),(408,164),(506,79)],
-            8))'''
+            8))
 
     ####  Obstacles [shape, [coordinates], color]
     app.obstacleDictionary[0].append(rectangle(50,50,200,200,"blue"))
@@ -320,7 +373,7 @@ def appStarted(app):
 
 
 
-def determineVisionCones(app):                            #   MVC VIOLATION
+def determineVisionCones(app):                        
     playerDetectSet = set()
     app.player.isDetected = False
     for enemy in app.enemyDictionary[app.level]:
@@ -333,6 +386,7 @@ def determineVisionCones(app):                            #   MVC VIOLATION
         app.player.fill = "green"
     else:
         app.player.fill = "blue"
+
 def drawVisionCones(app, canvas):
     for enemy in app.enemyDictionary[app.level]:
         x1,y1 = enemy.position
