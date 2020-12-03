@@ -476,7 +476,7 @@ def appStarted(app):
     app.obstacleDictionary[0].append(rectangle(390,270,630,510,"green"))
 
     app.obstacleDictionary[0].append(rectangle(0,0,app.width,30,"grey"))
-    app.obstacleDictionary[0].append(rectangle(0,app.height,app.width,app.height-30,"grey"))
+    app.obstacleDictionary[0].append(rectangle(0,app.height-30,app.width,app.height,"grey"))
     app.obstacleDictionary[0].append(rectangle(0,30,30,app.height-30,"grey"))
     app.obstacleDictionary[0].append(rectangle(app.width-30,30,app.width,app.height-30,"grey"))
 
