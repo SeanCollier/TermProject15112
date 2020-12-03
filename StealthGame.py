@@ -49,6 +49,33 @@ def minDistPoint(x,y,L):
             minPoint = point
     return minPoint
 
+def findClosestGridPoint(x,y,app):
+    col1 = int(x//60-1)
+    col2 = int(col1 +1)
+    row1 = int(y//60-1)
+    row2 = int(row1+1)
+    minDist = None
+    minPoint = None
+    if row1<0:
+        row1 = 0
+    elif col1 <0:
+        col1 = 0
+    elif row2 >= len(app.gridPoints):
+        row2 = len(app.gridPoints)-1
+    elif col2 >= len(app.gridPoints[0]):
+        col2 = len(app.gridPoints[0])-1
+    for row in [row1, row2]:
+        for col in [col1, col2]:
+            point = app.gridPoints[row][col]
+            px,py = point
+            Distance = getDistance(x,y,px,py)
+            if minDist == None or Distance <= minDist:
+                minDist = Distance
+                minPoint = (px,py)
+    px, py = minPoint
+    return px,py
+
+
 #######################################################################################################
 
 #######################################################################################################
@@ -316,29 +343,8 @@ class Enemy(Entity):
                     if obstacle.pointInRectangle(x1,y1):
                         badPoints.append((x1,y1))
         x,y = self.position
-        col1 = int(x//60-1)
-        col2 = int(col1 +1)
-        row1 = int(y//60-1)
-        row2 = int(row1+1)
-        minDist = None
-        minPoint = None
-        if row1<0:
-            row1 = 0
-        elif col1 <0:
-            col1 = 0
-        elif row2 >= len(app.gridPoints):
-            row2 = len(app.gridPoints)-1
-        elif col2 >= len(app.gridPoints[0]):
-            col2 = len(app.gridPoints[0])-1
-        for row in [row1, row2]:
-            for col in [col1, col2]:
-                point = app.gridPoints[row][col]
-                px,py = point
-                Distance = getDistance(x,y,px,py)
-                if minDist == None or Distance <= minDist:
-                    minDist = Distance
-                    minPoint = (px,py)
-        px, py = minPoint
+        px, py = findClosestGridPoint(x,y,app)
+        minDist = getDistance(x,y,px,py)
         if minDist < self.speed:
             distance = minDist
         else:
