@@ -59,6 +59,7 @@ class rectangle(object):
         self.x2 = x2
         self.y2 = y2
         self.fill = fill
+
     def draw(self, canvas):
         canvas.create_rectangle(self.x1, self.y1, self.x2, self.y2,
                  fill = self.fill)
@@ -76,6 +77,11 @@ class rectangle(object):
             return intX, intY
         else:
             return None
+    
+    def pointInRectangle(self, x,y):
+        if x<=self.x2 and x>= self.x1 and y<=self.y2 and y>=self.y1:
+            return True
+        return False
 
 
     def collisionCheck(self, x, y, x2, y2, length):
@@ -116,34 +122,60 @@ class rectangle(object):
 
 
 class Entity(object):
+
     def __init__(self, fill,speed):
         self.radius = 20
         self.fill = fill
         self.speed = speed
     
-    def move(self, direction):
+    def move(self, direction, app):
         x,y = self.position
         dx, dy = direction
         dx *= self.speed
         dy *= self.speed
-        x+=dx
-        y+=dy
-        self.position = x,y
+        newX=x+dx
+        newY=y+dy
+        if (newY-self.radius < 0 or newY +self.radius > app.height or 
+                newX -self.radius < 0 or newX+self.radius > app.width):
+            newX = x
+            newY = y
+        
+        if self.overlappingObstacle(app, newX, newY):
+            newX = x
+            newY = y
+        self.position = newX, newY
+    
+    def overlappingObstacle(self, app, x1, y1):
+        offset = 0.707
+        possiblePoints = [(x1-self.radius, y1), 
+            (x1-offset*self.radius, y1+offset*self.radius),
+            (x1, y1+self.radius), (x1+offset*self.radius, y1+offset*self.radius),
+            (x1+self.radius, y1),(x1+offset*self.radius,y1-offset*self.radius),
+            (x1, y1-self.radius),(x1-offset*self.radius,y1-offset*self.radius)]
+        for point in possiblePoints:
+            x,y = point
+            for obstacle in app.obstacleDictionary[app.level]:
+                if obstacle.pointInRectangle(x,y):
+                    return True
+        return False
 
     def draw(self,canvas):
-        x0 = self.position[0]-self.radius
-        y0 = self.position[1]-self.radius
-        x1 = self.position[0]+self.radius
-        y1 = self.position[1]+self.radius
+        x,y = self.position
+        x0 = x-self.radius
+        y0 = y-self.radius
+        x1 = x+self.radius
+        y1 = y+self.radius
         canvas.create_oval(x0,y0,x1,y1,fill=self.fill)
 
 class Player(Entity):
     def __init__(self, fill,speed):
         super().__init__(fill,speed)
-        self.position = (200,200)
+        self.position = (60,300)
         self.stealthed = True
 
+
 class Enemy(Entity):
+    PlayersLKP = (0,0)
     def __init__(self,fill, pathType, path,speed):
         super().__init__(fill,speed)
         self.state = "patrolling"
@@ -163,11 +195,6 @@ class Enemy(Entity):
         self.turnCount = 0
         self.rawTurnAngle = 0
         self.chaseMoveDone = True
-        self.LKPlayerPos = (0,0)
-        self.LKPlayerSpeed = (0,0)
-
-        x1,y1 = self.position
-        x2,y2 = self.path[1]
         self.faceAngle = 0
         self.visionEndpoints = []
     def behave(self,app):
@@ -175,11 +202,8 @@ class Enemy(Entity):
             self.followPath(app)
         elif self.state == "chasing":
             self.chase(app)
-    def moveRandomly(self):
-        dx = random.randint(-1,1)
-        dy = random.randint(-1,1)
-        direction = dx,dy
-        self.move(direction)
+        elif self.state == "searching":
+            self.search(app)
     def castVision(self,app):
         self.visionEndpoints = []
         numLines = 40
@@ -256,12 +280,14 @@ class Enemy(Entity):
         if abs(self.rawTurnAngle - self.faceAngle) <= 0.1:
             self.turnComplete = True
     
-    def move(self, px, py, distance):
+    def move(self, px, py, distance, app):
         x,y = self.position
         if distance <= self.speed:
-                movement = distance
+            movement = distance
         else:
             movement = self.speed
+        if distance == 0:
+            return
         xDist = px-x
         yDist = py-y
         cos = xDist/distance
@@ -270,9 +296,54 @@ class Enemy(Entity):
         dx = cos*movement
         dy = sin*movement
 
-        x+= dx
-        y+= dy
-        self.position = x,y
+        newX = x+dx
+        newY = y+dy
+        if (newY-self.radius < 0 or newY +self.radius > app.height or 
+                newX -self.radius < 0 or newX+self.radius > app.width):
+                newX = x
+                newY = y
+        if self.overlappingObstacle(app, newX, newY):
+            newX = x
+            newY = y
+        self.position = newX,newY
+    
+    def pathFind(self,app):
+        badPoints = []
+        for row in app.gridPoints:
+            for point in row:
+                x1,y1 = point
+                for obstacle in app.obstacleDictionary[app.level]:
+                    if obstacle.pointInRectangle(x1,y1):
+                        badPoints.append((x1,y1))
+        x,y = self.position
+        col1 = int(x//60-1)
+        col2 = int(col1 +1)
+        row1 = int(y//60-1)
+        row2 = int(row1+1)
+        minDist = None
+        minPoint = None
+        if row1<0:
+            row1 = 0
+        elif col1 <0:
+            col1 = 0
+        elif row2 >= len(app.gridPoints):
+            row2 = len(app.gridPoints)-1
+        elif col2 >= len(app.gridPoints[0]):
+            col2 = len(app.gridPoints[0])-1
+        for row in [row1, row2]:
+            for col in [col1, col2]:
+                point = app.gridPoints[row][col]
+                px,py = point
+                Distance = getDistance(x,y,px,py)
+                if minDist == None or Distance <= minDist:
+                    minDist = Distance
+                    minPoint = (px,py)
+        px, py = minPoint
+        if minDist < self.speed:
+            distance = minDist
+        else:
+            distance = self.speed
+        self.move(px, py, distance, app)
 
         
     
@@ -310,11 +381,19 @@ class Enemy(Entity):
         else:
             self.turnAngleUnknown = True
             self.turnComplete = False
-            self.move(px, py, distance)
+            self.move(px, py, distance, app)
         
 
     def chase(self, app):
         if self.castVision(app):
+            Enemy.PlayersLKP = app.player.position
+            x1,y1 = self.position
+            alertDistance = 1000
+            for enemy in app.enemyDictionary[app.level]:
+                x2,y2 = enemy.position
+                if getDistance(x1,y1,x2,y2) <= alertDistance:
+                    if enemy.state != "chasing":
+                        enemy.state = "searching"
             x1,y1 = self.position
             x2,y2 = app.player.position
             self.targetPosition = x2,y2
@@ -334,8 +413,21 @@ class Enemy(Entity):
             maxDistance = self.radius + 5
             distance = getDistance(x1,y1,x2,y2)
             if not distance <= maxDistance:
-                self.move(x2,y2, distance)
+                self.move(x2,y2, distance, app)
             self.chaseCount += 1
+        else:
+            self.state = "searching"
+    
+    def search(self, app):
+        if self.castVision(app):
+            self.state = "chasing"
+        else:
+            '''x1,y1 = self.position
+            px,py = Enemy.PlayersLKP
+            distance = getDistance(x1,y1,px,py)
+            self.move(px, py, distance, app)'''
+            self.pathFind(app)
+    
         
 def timerFired(app):
     determineVisionCones(app)
@@ -347,6 +439,14 @@ def mousePressed(app, event):
     print(event.x, event.y)
 
 def appStarted(app):
+    app.gridPoints = []
+    for y in range(1,app.height//60):
+        row = []
+        for x in range(1,app.width//60):
+            row.append((x*60,y*60))
+        app.gridPoints.append(row)
+    print(len(app.gridPoints), len(app.gridPoints[0]))
+
     app.player = Player("blue",10)
     app.level = 0
     app.timerDelay = 60
@@ -357,19 +457,22 @@ def appStarted(app):
     app.obstacleDictionary = {0: [], 1:[]}
     ####   Enemies 
     # Level 0
-    app.enemyDictionary[0].append(Enemy("red", "looped",
-        [(50,47), (303,47), (502,191), (289, 335), (62, 351)],8))
+    app.enemyDictionary[0].append(Enemy("red", "wrapped",
+        [(60,60),(840,60)],10))
     #app.enemyDictionary[0].append(Enemy("red", "looped",
     #    [(41,33),(537, 33)],8))
     #app.enemyDictionary[0].append(Enemy("Blue","wrapped",[(41,343),(537,343)],8))
     app.enemyDictionary[0].append(Enemy("green", "wrapped",
-        [(114,89),(320,180),(143,264),(338,358),(498,231),(408,164),(506,79)],
-            8))
+        [(60,540),(840,540)],10))
 
     ####  Obstacles [shape, [coordinates], color]
-    app.obstacleDictionary[0].append(rectangle(50,50,200,200,"blue"))
-    app.obstacleDictionary[0].append(rectangle(250,10,350,100,"green"))
+    app.obstacleDictionary[0].append(rectangle(150,150,750,210,"blue"))
+    app.obstacleDictionary[0].append(rectangle(390,270,630,510,"green"))
 
+    app.obstacleDictionary[0].append(rectangle(0,0,app.width,30,"grey"))
+    app.obstacleDictionary[0].append(rectangle(0,app.height,app.width,app.height-30,"grey"))
+    app.obstacleDictionary[0].append(rectangle(0,30,30,app.height-30,"grey"))
+    app.obstacleDictionary[0].append(rectangle(app.width-30,30,app.width,app.height-30,"grey"))
 
 
 
@@ -406,7 +509,7 @@ def keyPressed(app, event):
     elif event.key == "Left":
         direction = (-1,0)
     if direction != None:
-        app.player.move(direction)
+        app.player.move(direction,app)
 
 def drawObstacles(app, canvas):
     for item in app.obstacleDictionary[app.level]:
@@ -420,4 +523,8 @@ def redrawAll(app, canvas):
     for enemy in app.enemyDictionary[app.level]:
         enemy.draw(canvas)
     app.player.draw(canvas)
-runApp(width=600, height=400)
+    for row in range(len(app.gridPoints)):
+        for col in range(len(app.gridPoints[0])):
+            x,y = app.gridPoints[row][col]
+            canvas.create_oval(x-5,y-5,x+5,y+5,fill = "red")
+runApp(width=900, height=600)
