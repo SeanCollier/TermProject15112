@@ -75,6 +75,19 @@ def findClosestGridPoint(x,y,app):
     px, py = minPoint
     return px,py
 
+def findClosestGridRowCol(app, x,y):
+    col1,row1 = findClosestGridPoint(x,y,app)
+    row1//=60
+    col1//=60
+    row1 = int(row1)-1
+    col1 = int(col1)-1
+    return row1,col1
+
+def isValidCell(row, col, L):
+    if row < 0 or col < 0 or row >= len[L] or col >= len(L[0]):
+        return False
+    return True
+
 
 #######################################################################################################
 
@@ -224,6 +237,15 @@ class Enemy(Entity):
         self.chaseMoveDone = True
         self.faceAngle = 0
         self.visionEndpoints = []
+
+        self.onClosestPoint = False
+        self.searchPath = []
+        self.searchPathFound = []
+        self.obstaclePoints = []
+        self.openList = []
+        self.closedList = []
+        
+
     def behave(self,app):
         if self.state == "patrolling":
             self.followPath(app)
@@ -334,24 +356,75 @@ class Enemy(Entity):
             newY = y
         self.position = newX,newY
     
-    def pathFind(self,app):
-        badPoints = []
-        for row in app.gridPoints:
-            for point in row:
-                x1,y1 = point
-                for obstacle in app.obstacleDictionary[app.level]:
-                    if obstacle.pointInRectangle(x1,y1):
-                        badPoints.append((x1,y1))
-        x,y = self.position
-        px, py = findClosestGridPoint(x,y,app)
-        minDist = getDistance(x,y,px,py)
-        if minDist < self.speed:
-            distance = minDist
-        else:
-            distance = self.speed
-        self.move(px, py, distance, app)
+    def determinePathBetween2GridPoints(self, app, startRow, startCol, endRow, endCol, badPoints, dirs):
+        openList = []
+        closedList = []
+
+        print(f"startRow,startCol: {startRow}, {startCol}")
+        print(f"endRow, endCol: {endRow},{endCol}")
+        startX, startY = app.gridPoints[startRow][startCol]
+        endX, endY = app.gridPoints[endRow][endCol]
+
+        rows = len(app.gridPoints)
+        cols = len(app.gridPoints[0])
+        
+        gList = [[0]*cols for row in range(rows)]
+        hList = [[0]*cols for row in range(rows)]
+        fList = [[0]*cols for row in range(rows)]
+
+        for row in range(rows):
+            for col in range(cols):
+                x,y = app.gridPoints[row][col]
+                distanceFromStart = getDistance(x,y,startX,startY)
+                distanceFromEnd = getDistance(x,y,startX,startY)
+                gList[row][col] = distanceFromStart
+                hList[row][col] = distanceFromEnd
+
+        startNode = (startRow, startCol)
+        openList.append(startNode)
+
+        while not openList == []:
+            pass
+
+
+
 
         
+        
+        
+
+    
+    def pathFindToPlayer(self,app):
+        badPoints = []
+        for row in range(len(app.gridPoints)):
+            for col in range(len(app.gridPoints[0])):
+                x1,y1 = app.gridPoints[row][col]
+                for obstacle in app.obstacleDictionary[app.level]:
+                    if obstacle.pointInRectangle(x1,y1):
+                        badPoints.append((row,col))
+        if not self.onClosestPoint:
+            x,y = self.position
+            px, py = findClosestGridPoint(x,y,app)
+            minDist = getDistance(x,y,px,py)
+            if minDist < self.speed:
+                distance = minDist
+            else:
+                distance = self.speed
+            self.move(px, py, distance, app)
+            self.onClosestPoint = True
+            self.searchPathFound = False
+            self.searchPath = []
+        elif not self.searchPathFound:
+            x,y = self.position
+            row1,col1 = findClosestGridRowCol(app, x,y)
+            x2,y2 = self.PlayersLKP
+            row2,col2 = findClosestGridRowCol(app, x2, y2)
+            dirs = [(-1, -1), (-1, 0), (-1,1),
+                    (0,-1),            (0,1),
+                    (1,-1),   (1,0),   (1,1)]
+            self.searchPath = self.determinePathBetween2GridPoints(app,row1,col1,row2,col2,badPoints, dirs)
+
+       
     
     ############################# Behavioral functions #########################
 
@@ -432,7 +505,7 @@ class Enemy(Entity):
             px,py = Enemy.PlayersLKP
             distance = getDistance(x1,y1,px,py)
             self.move(px, py, distance, app)'''
-            self.pathFind(app)
+            self.pathFindToPlayer(app)
     
         
 def timerFired(app):
