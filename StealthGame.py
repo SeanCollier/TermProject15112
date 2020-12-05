@@ -1,6 +1,8 @@
 from cmu_112_graphics import *
 import random
 import math
+import copy
+import time
 
 
 #################################        Math Helpers           #######################################
@@ -58,12 +60,12 @@ def findClosestGridPoint(x,y,app):
     minPoint = None
     if row1<0:
         row1 = 0
-    elif col1 <0:
+    if col1 <0:
         col1 = 0
-    elif row2 >= len(app.gridPoints):
+    if row2 >= len(app.gridPoints):
         row2 = len(app.gridPoints)-1
-    elif col2 >= len(app.gridPoints[0]):
-        col2 = len(app.gridPoints[0])-1
+    if col2 >= len(app.gridPoints[0]):
+        col2 -= 1
     for row in [row1, row2]:
         for col in [col1, col2]:
             point = app.gridPoints[row][col]
@@ -90,8 +92,24 @@ def isValidCell(row, col, L):
 
 
 #######################################################################################################
+#############################  Node class modified from https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2
+class Node():
+    def __init__(self,position, rowCol, h = 0,g = 0, parent = None):
+        self.f = h+g
+        self.h = h
+        self.g = g
+        self.position = position
+        self.parent = parent
+        self.rowCol = rowCol
+
+    def __eq__(self,other):
+        return self.rowCol == other.rowCol
+    
+    def __repr__(self):
+        return f"Node at : {self.rowCol}"
 
 #######################################################################################################
+
 class rectangle(object):
     def __init__(self, x1, y1, x2, y2, fill):
         self.x1 = x1
@@ -244,7 +262,7 @@ class Enemy(Entity):
         self.obstaclePoints = []
         self.openList = []
         self.closedList = []
-        
+        self.originalFill = self.fill        
 
     def behave(self,app):
         if self.state == "patrolling":
@@ -365,35 +383,83 @@ class Enemy(Entity):
         startX, startY = app.gridPoints[startRow][startCol]
         endX, endY = app.gridPoints[endRow][endCol]
 
-        rows = len(app.gridPoints)
-        cols = len(app.gridPoints[0])
-        
-        gList = [[0]*cols for row in range(rows)]
-        hList = [[0]*cols for row in range(rows)]
-        fList = [[0]*cols for row in range(rows)]
+        startNode = Node((startX,startX),(startRow,startCol))
+        endNode = Node((endX,endY),(endRow,endCol))
 
-        for row in range(rows):
-            for col in range(cols):
-                x,y = app.gridPoints[row][col]
-                distanceFromStart = getDistance(x,y,startX,startY)
-                distanceFromEnd = getDistance(x,y,startX,startY)
-                gList[row][col] = distanceFromStart
-                hList[row][col] = distanceFromEnd
-
-        startNode = (startRow, startCol)
         openList.append(startNode)
 
-        while not openList == []:
-            pass
+        rows = len(app.gridPoints)
+        cols = len(app.gridPoints[0])
 
+        #self,position, rowCol, h = 0,g = 0, parent = None
 
+        for i in range(len(badPoints)):
+            row, col = badPoints[i]
+            x,y = findClosestGridPoint(row,col,app)
+            h = getDistance(x,y,startX,startY)
+            g = getDistance(x,y, endX, endY)
+            closedList.append(Node((x,y),(row,col),h,g))
+        while openList != []:
+            currentNode = openList[0]
+            currentIndex = 0
+            for i in range(len(openList)):
+                checkNode = openList[i]
+                if checkNode.f < currentNode.f:
+                    currentNode = checkNode
+                    currentIndex = i
+            inClosedList = False
+            for node in closedList:
+                if node == currentNode:
+                    inClosedList = True
+            if inClosedList:
+                print(f"{childNode} in closed list")
+                openList.pop(currentIndex)
+                continue
 
+            openList.pop(currentIndex)
 
-        
-        
-        
+            closedList.append(currentNode)
 
-    
+            print(f"currentNode: {currentNode}")
+
+            if currentNode == endNode:
+                print("yay")
+                pathNode = currentNode
+                path = []
+                while pathNode is not None:
+                    path.append(pathNode)
+                    pathNode = pathNode.parent
+                print(path[::-1])
+                return path[::-1]
+            row,col = currentNode.rowCol
+            currX, currY = currentNode.position
+            for direction in dirs:
+                drow, dcol = direction
+                newRow = row+drow
+                newCol = col+dcol
+                if newCol < 0 or newRow < 0 or newRow >= rows or newCol >= cols:
+                    continue
+                childNode = Node(app.gridPoints[newRow][newCol], (newRow, newCol), parent = currentNode)
+                inClosedList = False
+                for node in closedList:
+                    if childNode == node:
+                        inClosedList = True
+                if inClosedList:
+                    continue
+                childNode = Node(app.gridPoints[newRow][newCol], (newRow, newCol), parent = currentNode)
+                cx,cy = childNode.position
+                childNode.g = getDistance(cx,cy,currX,currY) + currentNode.g
+                childNode.h = getDistance(cx,cy, endX, endY)
+                if childNode == endNode:
+                    childNode.f = 0
+                inOpenList = False
+                for node in openList:
+                    if childNode == node and childNode.g > node.g:
+                        inOpenList = True
+
+                if not(inClosedList or inOpenList):
+                    openList.append(childNode)
+  
     def pathFindToPlayer(self,app):
         badPoints = []
         for row in range(len(app.gridPoints)):
@@ -419,10 +485,22 @@ class Enemy(Entity):
             row1,col1 = findClosestGridRowCol(app, x,y)
             x2,y2 = self.PlayersLKP
             row2,col2 = findClosestGridRowCol(app, x2, y2)
-            dirs = [(-1, -1), (-1, 0), (-1,1),
+            dirs = [ (-1, 0),
                     (0,-1),            (0,1),
-                    (1,-1),   (1,0),   (1,1)]
+                       (1,0)]
             self.searchPath = self.determinePathBetween2GridPoints(app,row1,col1,row2,col2,badPoints, dirs)
+            self.searchPathFound = True
+            self.searchCount = 0
+            self.originalFill = self.fill
+        elif self.searchCount <= 300:
+            self.fill = "orange"
+            self.searchCount += 1
+        else:
+            self.fill = self.originalFill
+            self.searchPathFound = False
+            self.onClosestPoint = False
+
+
 
        
     
@@ -505,7 +583,7 @@ class Enemy(Entity):
             px,py = Enemy.PlayersLKP
             distance = getDistance(x1,y1,px,py)
             self.move(px, py, distance, app)'''
-            self.pathFindToPlayer(app)
+            self.searchPath = self.pathFindToPlayer(app)
     
         
 def timerFired(app):
