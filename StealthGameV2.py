@@ -93,9 +93,33 @@ def findClosestGridRowCol(app, x,y):
     return row1,col1
 
 def isValidCell(row, col, L):
-    if row < 0 or col < 0 or row >= len[L] or col >= len(L[0]):
+    if row < 0 or col < 0 or row >= len(L) or col >= len(L[0]):
         return False
     return True
+
+def getRandomNearbyPoint(app, distance, startRow, startCol, badPoints):
+    pointFound = False
+    dxList = [x for x in range(-distance, distance+1)]
+    endRow = 0
+    endCol = 0
+    while not pointFound:
+        xIndex = random.randint(0,len(dxList)-1)
+        yIndex = random.randint(0,len(dxList)-1)
+        if yIndex == xIndex == 0:
+            continue
+        potentialCol = startCol + dxList[xIndex]
+        potentialRow = startRow + dxList[yIndex]
+        if (isValidCell(potentialRow, potentialCol, app.gridPoints) and 
+                (potentialRow, potentialCol) not in badPoints):
+            endRow = potentialRow
+            endCol = potentialCol
+            pointFound = True
+    return (endRow, endCol)
+
+        
+
+        
+
 
 
 #######################################################################################################
@@ -254,7 +278,7 @@ class Enemy(Entity):
         self.position = path[0]
         self.dPath = 1
         self.turnAngleUnknown = True
-        self.turnSpeed = math.pi/180 * 10
+        self.turnSpeed = math.pi/180 * 20
         self.turnAngle = 0
         self.turnComplete = False
         self.turnCount = 0
@@ -264,7 +288,7 @@ class Enemy(Entity):
         self.visionEndpoints = []
 
         self.searchPath = []
-        self.searchPathFound = []
+        self.searchPathFound = False
         self.obstaclePoints = []
         self.openList = []
         self.closedList = []
@@ -274,8 +298,15 @@ class Enemy(Entity):
 
         self.printed = False
 
+        self.sweepAngleSet = False
+        self.sweepAngle = 0
+        self.sweepCount = 0
+        self.sweepPath = []
+        self.sweepPathFound = False
+        self.returnPathFound = False
+        self.returnPath = []
+
     def behave(self,app):
-        print(self.fill, self.state)
         if self.state == "patrolling":
             self.path = self.patrolPath
             self.followAnyPath(app)
@@ -283,10 +314,12 @@ class Enemy(Entity):
             self.chase(app)
         elif self.state == "searching":
             self.search(app)
+        elif self.state == "sweeping":
+            self.sweep(app)
     def castVision(self,app):
         self.visionEndpoints = []
-        numLines = 40
-        visionLength = 100
+        numLines = 60
+        visionLength = 150
         anglePerLine = math.pi/(4*numLines)
         startAngle = self.faceAngle-math.pi/8
         x1, y1 = self.position
@@ -344,6 +377,9 @@ class Enemy(Entity):
             nextPointIndex = 0
         if len(self.path)==1:
             self.state = "sweeping"
+            self.currentPointIndex = 0
+            self.sweepCount = 0
+            self.dPath = 1
         else:
             x2,y2 = self.path[nextPointIndex]
             self.rawTurnAngle = getAngleBetweenTwoPoints(x1,y1,x2,y2)
@@ -351,8 +387,8 @@ class Enemy(Entity):
             self.turnAngleUnknown = False
 
     def turn(self,dAngle):
-        self.faceAngle=fixAngle(self.faceAngle+dAngle)
-        if abs(self.rawTurnAngle-self.faceAngle) <= 0.1:
+        self.faceAngle=fixAngle(self.faceAngle+dAngle) 
+        if fixAngle(abs(self.rawTurnAngle-self.faceAngle)) <= 0.01:
             self.turnComplete = True
     
     def move(self, px, py, distance, app):
@@ -368,8 +404,8 @@ class Enemy(Entity):
         cos = xDist/distance
         sin = yDist/distance
 
-        dx = cos*movement
-        dy = sin*movement
+        dx = cos*movement*0.9
+        dy = sin*movement*0.9
 
         newX = x+dx
         newY = y+dy
@@ -431,7 +467,10 @@ class Enemy(Entity):
                 while pathNode is not None:
                     path.append(pathNode)
                     pathNode = pathNode.parent
-                self.searchPath = path[::-1]
+                if self.state == "searching":
+                    self.searchPath = path[::-1]
+                elif self.state == "sweeping":
+                    self.returnPath = path[::-1]
                 return
             row,col = currentNode.rowCol
             currX, currY = currentNode.position
@@ -470,7 +509,7 @@ class Enemy(Entity):
                 for obstacle in app.obstacleDictionary[app.level]:
                     if obstacle.pointInRectangle(x1,y1):
                         badPoints.append((row,col))
-        if self.searchPath == []:
+        if not self.searchPathFound:
             x,y = self.position
             row1,col1 = findClosestGridRowCol(app, x,y)
             x2,y2 = self.PlayersLKP
@@ -481,6 +520,7 @@ class Enemy(Entity):
             self.determinePathBetween2GridPoints(app,row1,col1,row2,col2,badPoints, dirs)
             self.searchCount = 0
             self.currentPointIndex = 0
+            self.searchPathFound = True
             self.dPath = 1
         else:
             self.path = []
@@ -490,10 +530,51 @@ class Enemy(Entity):
                 y = (row+1)*60
                 self.path.append((x,y))
             self.followAnyPath(app)
+    
+    def determineSweepPath(self, app):
+        startX, startY = self.position
+        startRow, startCol = findClosestGridRowCol(app, startX, startY)
+        distance = 3
+        badPoints = []
+        for row in range(len(app.gridPoints)):
+            for col in range(len(app.gridPoints[0])):
+                x1,y1 = app.gridPoints[row][col]
+                for obstacle in app.obstacleDictionary[app.level]:
+                    if obstacle.pointInRectangle(x1,y1):
+                        badPoints.append((row,col))
+        endRow, endCol = getRandomNearbyPoint(app, distance, startRow, startCol, badPoints)
+        dirs = [ (-1, 0),
+                    (0,-1),            (0,1),
+                       (1,0)]
+        self.determinePathBetween2GridPoints(app, startRow, startCol, endRow, endCol, badPoints, dirs)
 
+    def determineReturnPath(self,app):
+        x,y = self.position
+        row1,col1 = findClosestGridRowCol(app, x,y)
+        x2,y2 = self.patrolPath[0]
+        row2,col2 = findClosestGridRowCol(app, x2, y2)
+        dirs = [ (-1, 0),
+                (0,-1),            (0,1),
+                       (1,0)]
+        badPoints = []
+        for row in range(len(app.gridPoints)):
+            for col in range(len(app.gridPoints[0])):
+                x1,y1 = app.gridPoints[row][col]
+                for obstacle in app.obstacleDictionary[app.level]:
+                    if obstacle.pointInRectangle(x1,y1):
+                        badPoints.append((row,col))
+        self.determinePathBetween2GridPoints(app,row1,col1,row2,col2,badPoints, dirs)
+        self.searchCount = 0
+        self.currentPointIndex = 0
+        self.dPath = 1
+    def dumpState(self):
+        print("******************************************")
+        print(self.fill)
+        print(self.state)
+        print(self.path)
+        print(self.currentPointIndex)
 
-
-       
+        
     
     ############################# Behavioral functions #########################
     
@@ -504,8 +585,13 @@ class Enemy(Entity):
             self.dPath = 1
             self.chaseCount = 0
             return
+        
         if self.currentPointIndex >= len(self.path) and self.state == "searching":
             self.state = "sweeping"
+            self.sweepCount = 0
+            self.currentPointIndex = 0
+            self.searchPathFound = False
+            self.dPath = 1
             return
         point = self.path[self.currentPointIndex]
         x,y = self.position
@@ -575,6 +661,7 @@ class Enemy(Entity):
             self.currentPointIndex = 0
             self.dPath = 1
             self.state = "searching"
+            self.searchPathFound = False
     
     def search(self, app):
         if self.castVision(app):
@@ -582,11 +669,63 @@ class Enemy(Entity):
             self.dPath = 1
             self.state = "chasing"
         else:
-            '''x1,y1 = self.position
-            px,py = Enemy.PlayersLKP
-            distance = getDistance(x1,y1,px,py)
-            self.move(px, py, distance, app)'''
             self.pathFindToPlayer(app)
+    
+    def sweep(self, app):
+        if self.castVision(app):
+            self.currentPointIndex = 0
+            self.dPath = 1
+            self.state = "chasing"
+            return
+        if not self.sweepAngleSet:
+            self.sweepAngle = fixAngle(self.faceAngle + math.pi)
+            self.sweepCount += 1
+            self.sweepAngleSet = True
+        elif self.sweepCount <= 2:
+            remainingAngle = fixAngle(self.sweepAngle-self.faceAngle)
+            if abs(remainingAngle) <= abs(self.turnSpeed):
+                dAngle = remainingAngle
+            else:
+                if remainingAngle > 0:
+                    dAngle = self.turnSpeed
+                else:
+                    dAngle = -self.turnSpeed
+            self.turn(dAngle)
+            if abs(fixAngle(self.sweepAngle - self.faceAngle)) <= 0.1:
+                self.sweepAngleSet = False
+                self.sweepCount += 1
+        else:
+            x,y = self.position
+            x1,y1 = self.patrolPath[0]
+            if not self.returnPathFound:
+                #self.determineSweepPath(app)
+                #self.sweepPathFound = True
+                self.determineReturnPath(app)
+                self.currentPointIndex = 0
+                self.dPath = 1
+                self.returnPathFound = True
+                self.path = []
+                for node in self.returnPath:
+                    row,col = node.rowCol
+                    x = (col+1)*60
+                    y = (row+1)*60
+                    self.path.append((x,y))
+            elif not (getDistance(x,y,x1,y1) <= 1):
+                self.followAnyPath(app)
+            else:
+                self.currentPointIndex = 0
+                self.returnPathFound = False
+                self.dPath = 1
+                self.path = self.patrolPath
+                self.state = "patrolling"
+                return
+
+
+
+        
+        
+        
+
     
         
 def timerFired(app):
@@ -597,6 +736,10 @@ def timerFired(app):
 
 def mousePressed(app, event):
     print(event.x, event.y)
+    for enemy in app.enemyDictionary[app.level]:
+        x1,y1 = enemy.position
+        if getDistance(event.x,event.y,x1,y1) <= enemy.radius:
+            enemy.dumpState()
 
 def appStarted(app):
     app.gridPoints = []
@@ -617,14 +760,13 @@ def appStarted(app):
     ####   Enemies 
     # Level 0
     app.enemyDictionary[0].append(Enemy("red", "wrapped",
-        [(60,60),(840,60)],10))
-    #app.enemyDictionary[0].append(Enemy("red", "looped",
-    #    [(41,33),(537, 33)],8))
+        [(60,60),(840,60)],15))
+    app.enemyDictionary[0].append(Enemy("yellow", "wrapped",
+        [(120,480),(300, 480),(300,540),(120,540)],15))
     #app.enemyDictionary[0].append(Enemy("Blue","wrapped",[(41,343),(537,343)],8))
     #app.enemyDictionary[0].append(Enemy("green", "wrapped",
     #    [(60,540),(840,540)],10))
-    app.enemyDictionary[0].append(Enemy("Blue", "wrapped", [(480, 540), (540, 540), (600, 540), (660, 540), (660, 480), (660, 420), (660, 360), (660, 300), (660, 240), (720, 240), (780, 240), (780, 180), (780, 120), (780, 60), (720, 60), (660, 60), (600, 60), (540, 60), (480, 60)], 10))
-
+    app.enemyDictionary[0].append(Enemy("Blue", "wrapped", [(480, 540), (540, 540), (600, 540), (660, 540), (660, 480), (660, 420), (660, 360), (660, 300), (660, 240), (720, 240), (780, 240), (780, 180), (780, 120), (780, 60), (720, 60), (660, 60), (600, 60), (540, 60), (480, 60)], 15))
     ####  Obstacles [shape, [coordinates], color]
     app.obstacleDictionary[0].append(rectangle(150,150,750,210,"blue"))
     app.obstacleDictionary[0].append(rectangle(390,270,630,510,"green"))
