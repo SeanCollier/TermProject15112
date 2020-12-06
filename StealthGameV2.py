@@ -97,24 +97,23 @@ def isValidCell(row, col, L):
         return False
     return True
 
-def getRandomNearbyPoint(app, distance, startRow, startCol, badPoints):
-    pointFound = False
-    dxList = [x for x in range(-distance, distance+1)]
-    endRow = 0
-    endCol = 0
-    while not pointFound:
-        xIndex = random.randint(0,len(dxList)-1)
-        yIndex = random.randint(0,len(dxList)-1)
-        if yIndex == xIndex == 0:
-            continue
-        potentialCol = startCol + dxList[xIndex]
-        potentialRow = startRow + dxList[yIndex]
+def getRandomPoints(app, badPoints):
+    points = []
+    rows = len(app.gridPoints)
+    cols = len(app.gridPoints[0])
+    while len(points) < 2:
+        rIndex = random.randint(0,rows-1)
+        cIndex = random.randint(0,cols-1)
+        potentialPoint = app.gridPoints[rIndex][cIndex]
+        potentialX, potentialY = potentialPoint
+        potentialRow, potentialCol = findClosestGridRowCol(app,potentialX, potentialY)
+        px, py = app.player.position
         if (isValidCell(potentialRow, potentialCol, app.gridPoints) and 
-                (potentialRow, potentialCol) not in badPoints):
-            endRow = potentialRow
-            endCol = potentialCol
-            pointFound = True
-    return (endRow, endCol)
+                (potentialRow, potentialCol) not in badPoints) and getDistance(px,py,potentialX, potentialY) > 140:
+            row = potentialRow
+            col = potentialCol
+            points.append((row,col))
+    return points
 
         
 
@@ -123,7 +122,7 @@ def getRandomNearbyPoint(app, distance, startRow, startCol, badPoints):
 
 
 #######################################################################################################
-#############################  Node class modified from https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2
+##############  Node class modified from https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2
 class Node():
     def __init__(self,position, rowCol, h = 0,g = 0, parent = None):
         self.f = h+g
@@ -224,6 +223,9 @@ class Entity(object):
         dy *= self.speed
         newX=x+dx
         newY=y+dy
+        if (newY-self.radius > (app.height/3) and newY+self.radius < (app.height*2/3) and newX+self.radius > (app.width-35)):
+            changeLevel(app)
+            return
         if (newY-self.radius < 0 or newY +self.radius > app.height or 
                 newX -self.radius < 0 or newX+self.radius > app.width):
             newX = x
@@ -265,17 +267,25 @@ class Player(Entity):
 
 class Enemy(Entity):
     PlayersLKP = (0,0)
-    def __init__(self,fill, pathType, path,speed):
+    def __init__(self,app,fill, speed, level):
         super().__init__(fill,speed)
         self.state = "patrolling"
+        self.level=level
+        self.patrolPath = []
+        self.constructPath(app)
+        self.path = []
+        for node in self.patrolPath:
+            row,col = node.rowCol
+            x = (col+1)*60
+            y = (row+1)*60
+            self.path.append((x,y))
+        self.patrolPath = self.path
         self.chaseCount = 0
         self.isDetected = False
         self.face = 0
-        self.path = path
-        self.pathType = pathType
         self.isMoving = False
         self.currentPointIndex = 0
-        self.position = path[0]
+        self.position = self.path[0]
         self.dPath = 1
         self.turnAngleUnknown = True
         self.turnSpeed = math.pi/180 * 20
@@ -294,8 +304,6 @@ class Enemy(Entity):
         self.closedList = []
         self.originalFill = self.fill
 
-        self.patrolPath = path  
-
         self.printed = False
 
         self.sweepAngleSet = False
@@ -305,6 +313,27 @@ class Enemy(Entity):
         self.sweepPathFound = False
         self.returnPathFound = False
         self.returnPath = []
+    
+    def constructPath(self, app):
+        badPoints = []
+        for row in range(len(app.gridPoints)):
+            for col in range(len(app.gridPoints[0])):
+                x1,y1 = app.gridPoints[row][col]
+                for obstacle in app.obstacleDictionary[self.level]:
+                    if obstacle.pointInRectangle(x1,y1):
+                        badPoints.append((row,col))
+        points = getRandomPoints(app,badPoints)
+        startPoint = points[0]
+        startRow, startCol = startPoint
+        endPoint = points[1]
+        endRow, endCol = endPoint
+        dirs = [ (-1, 0),
+                    (0,-1),            (0,1),
+                       (1,0)]
+        self.determinePathBetween2GridPoints(app, startRow, startCol, endRow, endCol, badPoints, dirs, True)
+
+
+        
 
     def behave(self,app):
         if self.state == "patrolling":
@@ -368,13 +397,10 @@ class Enemy(Entity):
         x1,y1 = self.position
         tempDPath = self.dPath
         nextPointIndex = self.currentPointIndex + tempDPath
-        if self.pathType == "wrapped":
-            if self.currentPointIndex == 0:
-                nextPointIndex = 1
-            elif self.currentPointIndex == len(self.path)-1:
+        if self.currentPointIndex == 0:
+            nextPointIndex = 1
+        elif self.currentPointIndex == len(self.path)-1:
                 nextPointIndex = len(self.path)-2        
-        if self.pathType == "looped" and self.currentPointIndex == len(self.path)-1:
-            nextPointIndex = 0
         if len(self.path)==1:
             self.state = "sweeping"
             self.currentPointIndex = 0
@@ -417,8 +443,8 @@ class Enemy(Entity):
             newX = x
             newY = y
         self.position = newX,newY
-    
-    def determinePathBetween2GridPoints(self, app, startRow, startCol, endRow, endCol, badPoints, dirs):
+
+    def determinePathBetween2GridPoints(self, app, startRow, startCol, endRow, endCol, badPoints, dirs, constructing = False):
         openList = []
         closedList = []
 
@@ -440,7 +466,7 @@ class Enemy(Entity):
             x,y = findClosestGridPoint(row,col,app)
             h = getDistance(x,y,startX,startY)
             g = getDistance(x,y, endX, endY)
-            closedList.append(Node((x,y),(row,col),h,g))
+            closedList.append(Node((x,y),(row,col),h, g))
         while openList != []:
             currentNode = openList[0]
             currentIndex = 0
@@ -467,6 +493,8 @@ class Enemy(Entity):
                 while pathNode is not None:
                     path.append(pathNode)
                     pathNode = pathNode.parent
+                if constructing:
+                    self.patrolPath = path[::-1]
                 if self.state == "searching":
                     self.searchPath = path[::-1]
                 elif self.state == "sweeping":
@@ -615,10 +643,8 @@ class Enemy(Entity):
             else:
                 self.currentPointIndex += self.dPath
                 if self.state != "searching":
-                    if self.pathType == "looped":
-                        self.currentPointIndex = self.currentPointIndex%len(self.path)
-                    elif ((self.currentPointIndex == len(self.path)-1 or 
-                    self.currentPointIndex == 0) and self.pathType == "wrapped"):
+                    if ((self.currentPointIndex == len(self.path)-1 or 
+                    self.currentPointIndex == 0)):
                         self.dPath *= -1
         else:
             self.turnAngleUnknown = True
@@ -720,18 +746,23 @@ class Enemy(Entity):
                 self.state = "patrolling"
                 return
 
-
-
-        
-        
-        
-
-    
-        
 def timerFired(app):
+    if app.level == 5:
+        return
     determineVisionCones(app)
     for enemy in app.enemyDictionary[app.level]:
         enemy.behave(app)
+    timeReduction = int(((time.time()-app.ogTime)+app.timePenalty)//1)
+    app.timeLeft = app.totalTime-timeReduction
+    if app.timeLeft <= 0:
+        app.level = 4
+
+def changeLevel(app):
+    if app.level < 2:
+        app.level+= 1
+    elif app.level == 2:
+        app.level = 5
+    app.player.position = (60,300)
 
 
 def mousePressed(app, event):
@@ -748,33 +779,56 @@ def appStarted(app):
         for x in range(1,app.width//60):
             row.append((x*60,y*60))
         app.gridPoints.append(row)
-
+    app.ogTime = time.time()
+    app.timeLeft = 0
+    app.score = 0
     app.player = Player("blue",10)
     app.level = 0
     app.timerDelay = 60
+    app.timeFill = "black"
+    app.timePenalty = 0
 
-    #################    Level Dictionaries ####################################
 
-    app.enemyDictionary = {0: [], 1: []}
-    app.obstacleDictionary = {0: [], 1:[]}
-    ####   Enemies 
-    # Level 0
-    app.enemyDictionary[0].append(Enemy("red", "wrapped",
-        [(60,60),(840,60)],15))
-    app.enemyDictionary[0].append(Enemy("yellow", "wrapped",
-        [(120,480),(300, 480),(300,540),(120,540)],15))
-    #app.enemyDictionary[0].append(Enemy("Blue","wrapped",[(41,343),(537,343)],8))
-    #app.enemyDictionary[0].append(Enemy("green", "wrapped",
-    #    [(60,540),(840,540)],10))
-    app.enemyDictionary[0].append(Enemy("Blue", "wrapped", [(480, 540), (540, 540), (600, 540), (660, 540), (660, 480), (660, 420), (660, 360), (660, 300), (660, 240), (720, 240), (780, 240), (780, 180), (780, 120), (780, 60), (720, 60), (660, 60), (600, 60), (540, 60), (480, 60)], 15))
+
+    ################# Level Dictionaries ####################################
+
+    app.enemyDictionary = {0: [], 1: [], 2: [],4:[], 5:[]}
+    app.obstacleDictionary = {0: [], 1:[], 2:[], 4:[], 5:[]}
+    app.totalTime = 50
     ####  Obstacles [shape, [coordinates], color]
     app.obstacleDictionary[0].append(rectangle(150,150,750,210,"blue"))
     app.obstacleDictionary[0].append(rectangle(390,270,630,510,"green"))
-
-    app.obstacleDictionary[0].append(rectangle(0,0,app.width,30,"grey"))
-    app.obstacleDictionary[0].append(rectangle(0,app.height-30,app.width,app.height,"grey"))
-    app.obstacleDictionary[0].append(rectangle(0,30,30,app.height-30,"grey"))
-    app.obstacleDictionary[0].append(rectangle(app.width-30,30,app.width,app.height-30,"grey"))
+    
+    app.obstacleDictionary[1].append(rectangle(330,30,570,270,"black"))
+    app.obstacleDictionary[1].append(rectangle(450,450,690,570,"blue"))
+    app.obstacleDictionary[1].append(rectangle(150,205,270,570,"green"))
+    
+    app.obstacleDictionary[2].append(rectangle(630,90,750,570,"red"))
+    app.obstacleDictionary[2].append(rectangle(210,30,390,390,"black"))
+    app.obstacleDictionary[2].append(rectangle(450,450,630,570,"green"))
+    for level in range(3):
+        app.obstacleDictionary[level].append(rectangle(0,0,app.width,30,"grey"))
+        app.obstacleDictionary[level].append(rectangle(0,app.height-30,app.width,app.height,"grey"))
+        app.obstacleDictionary[level].append(rectangle(0,30,30,app.height-30,"grey"))
+        app.obstacleDictionary[level].append(rectangle(app.width-30, app.height/3, app.width, app.height*2/3, "lime"))
+        app.obstacleDictionary[level].append(rectangle(app.width-30,30,app.width,app.height/3,"grey"))
+        app.obstacleDictionary[level].append(rectangle(app.width-30, app.height*2/3, app.width, app.height-30, "grey"))
+    ####   Enemies 
+    # Level 0
+    # app,fill, speed
+    for color in ["red", "green", "yellow"]:
+        app.enemyDictionary[0].append(Enemy(app, color,10,0))
+    for color in ["red","green","yellow", "lime"]:
+        app.enemyDictionary[1].append(Enemy(app, color, 15,1))
+    for color in ["red","green","yellow", "lime", "black"]:
+        app.enemyDictionary[2].append(Enemy(app, color, 20,2))
+    #app.enemyDictionary[0].append(Enemy("yellow", "wrapped",
+    #    [(120,480),(300, 480),(300,540),(120,540)],15))
+    #app.enemyDictionary[0].append(Enemy("Blue","wrapped",[(41,343),(537,343)],8))
+    #app.enemyDictionary[0].append(Enemy("green", "wrapped",
+    #    [(60,540),(840,540)],10))
+    #app.enemyDictionary[0].append(Enemy("Blue", "wrapped", [(480, 540), (540, 540), (600, 540), (660, 540), (660, 480), (660, 420), (660, 360), (660, 300), (660, 240), (720, 240), (780, 240), (780, 180), (780, 120), (780, 60), (720, 60), (660, 60), (600, 60), (540, 60), (480, 60)], 15))
+    
 
 
 
@@ -785,17 +839,23 @@ def determineVisionCones(app):
         playerDetectSet.add(enemy.castVision(app))
     if True in playerDetectSet:
         app.player.isDetected = True
+        app.timeFill ="red"
+        app.timePenalty+=1
     else:
         app.player.isDetected = False
+        app.timeFill = "black"
 
 def drawVisionCones(app, canvas):
     for enemy in app.enemyDictionary[app.level]:
         x1,y1 = enemy.position
         for i in range(len(enemy.visionEndpoints)):
             x2,y2 = enemy.visionEndpoints[i]
-            canvas.create_line(x1,y1,x2,y2, width = 2, fill = "yellow")    
-            
+            canvas.create_line(x1,y1,x2,y2, width = 2, fill = "yellow")
 
+def drawTime(app, canvas):
+    canvas.create_text(80,app.height-15, text = f"Time: {app.timeLeft}", font = "Arial 20 bold", fill = app.timeFill)
+
+            
 def keyPressed(app, event):
     direction = None
     if event.key == "Up":
@@ -808,21 +868,38 @@ def keyPressed(app, event):
         direction = (-1,0)
     if direction != None:
         app.player.move(direction,app)
+    elif event.key == "k":
+        changeLevel(app)
 
 def drawObstacles(app, canvas):
     for item in app.obstacleDictionary[app.level]:
         item.draw(canvas)
 
+def drawLoseScreen(app, canvas):
+    canvas.create_rectangle(0,0,app.width,app.height, fill = "black")
+    canvas.create_text(app.width/2,app.height/2, text =  "You Lose!", fill = "Red", font = "Arial 54 bold")
+
+def drawWinScreen(app, canvas):
+    canvas.create_rectangle(0,0,app.width,app.height, fill = "Blue")
+    canvas.create_text(app.width/2,app.height/2, text =  "You Win!", fill = "Yellow", font = "Arial 54 bold")
+
 
 def redrawAll(app, canvas):
-    drawObstacles(app, canvas)
-    drawVisionCones(app,canvas)
+    if app.level == 4: 
+        drawLoseScreen(app,canvas)
+    elif app.level == 5:
+        drawWinScreen(app, canvas)
+    else:
+        canvas.create_rectangle(0,0,app.width,app.height, fill = "tan")
+        drawObstacles(app, canvas)
+        drawVisionCones(app,canvas)
 
-    for enemy in app.enemyDictionary[app.level]:
-        enemy.draw(canvas)
-    app.player.draw(canvas)
-    for row in range(len(app.gridPoints)):
-        for col in range(len(app.gridPoints[0])):
-            x,y = app.gridPoints[row][col]
-            canvas.create_oval(x-5,y-5,x+5,y+5,fill = "red")
+        for enemy in app.enemyDictionary[app.level]:
+            enemy.draw(canvas)
+        app.player.draw(canvas)
+        '''for row in range(len(app.gridPoints)):
+            for col in range(len(app.gridPoints[0])):
+                x,y = app.gridPoints[row][col]
+                canvas.create_oval(x-5,y-5,x+5,y+5,fill = "red")'''
+        drawTime(app, canvas)
 runApp(width=900, height=600)
