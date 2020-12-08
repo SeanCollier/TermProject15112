@@ -109,11 +109,26 @@ def getRandomPoints(app, badPoints):
         potentialRow, potentialCol = findClosestGridRowCol(app,potentialX, potentialY)
         px, py = app.player.position
         if (isValidCell(potentialRow, potentialCol, app.gridPoints) and 
-                (potentialRow, potentialCol) not in badPoints) and getDistance(px,py,potentialX, potentialY) > 140:
+                (potentialRow, potentialCol) not in badPoints and getDistance(px,py,potentialX, potentialY) > 140
+                and (potentialRow, potentialCol) not in points):
             row = potentialRow
             col = potentialCol
             points.append((row,col))
     return points
+
+def getOneRandomPoint(app, badPoints):
+    while True:
+        px,py = app.player.position
+        rows = len(app.gridPoints)
+        cols = len(app.gridPoints[0])
+        rIndex = random.randint(0,rows-1)
+        cIndex = random.randint(0,cols-1)
+        potentialPoint = app.gridPoints[rIndex][cIndex]
+        potentialX, potentialY = potentialPoint
+        potentialRow, potentialCol = findClosestGridRowCol(app,potentialX, potentialY)
+        if (isValidCell(potentialRow, potentialCol, app.gridPoints) and 
+                (potentialRow, potentialCol) not in badPoints and getDistance(60,300,potentialX, potentialY) > 140):
+            return (potentialRow, potentialCol)
 
         
 
@@ -208,6 +223,15 @@ class rectangle(object):
         allViablePoints = [x for x in [TLInt, LLInt, RLInt, BLInt] if x!= None]
         return minDistPoint(x,y, allViablePoints)
 
+class gate(rectangle):
+    def __init__(self, x1, y1, x2, y2, fill):
+        super().__init__(x1, y1, x2, y2, fill)
+    def checkForKey(self, app):
+        if app.hasKeyDictionary[app.level]:
+            self.fill = "lime"
+        else:
+            self.fill = "red"
+
 
 class Entity(object):
 
@@ -223,7 +247,7 @@ class Entity(object):
         dy *= self.speed
         newX=x+dx
         newY=y+dy
-        if (newY-self.radius > (app.height/3) and newY+self.radius < (app.height*2/3) and newX+self.radius > (app.width-35)):
+        if (newY-self.radius > (app.height/3) and newY+self.radius < (app.height*2/3) and newX+self.radius > (app.width-35) and app.gates[app.level].fill == "lime"):
             changeLevel(app)
             return
         if (newY-self.radius < 0 or newY +self.radius > app.height or 
@@ -263,6 +287,13 @@ class Player(Entity):
         super().__init__(fill,speed)
         self.position = (60,300)
         self.stealthed = True
+    def checkForKey(self, keyPosition):
+        x,y = keyPosition
+        x1,y1 = self.position
+        if getDistance(x1,y1,x,y) <= self.radius + 10:
+            return True
+        else:
+            return False
 
 
 class Enemy(Entity):
@@ -756,6 +787,12 @@ def timerFired(app):
     app.timeLeft = app.totalTime-timeReduction
     if app.timeLeft <= 0:
         app.level = 4
+    if app.player.checkForKey(app.keyPosition[app.level]):
+        app.hasKeyDictionary[app.level] = True
+    if app.level <= 2:
+        thisGate = app.gates[app.level]     
+        thisGate.checkForKey(app)
+
 
 def changeLevel(app):
     if app.level < 2:
@@ -794,7 +831,9 @@ def appStarted(app):
 
     app.enemyDictionary = {0: [], 1: [], 2: [],4:[], 5:[]}
     app.obstacleDictionary = {0: [], 1:[], 2:[], 4:[], 5:[]}
-    app.totalTime = 50
+    app.keyPosition = {0: 0, 1:0, 2:0, 3:0, 4:0, 5:0}
+    app.hasKeyDictionary = {0:False, 1:False, 2:False, 3:False, 4: False, 5:False}
+    app.totalTime = 10000
     ####  Obstacles [shape, [coordinates], color]
     app.obstacleDictionary[0].append(rectangle(150,150,750,210,"blue"))
     app.obstacleDictionary[0].append(rectangle(390,270,630,510,"green"))
@@ -806,13 +845,29 @@ def appStarted(app):
     app.obstacleDictionary[2].append(rectangle(630,90,750,570,"red"))
     app.obstacleDictionary[2].append(rectangle(210,30,390,390,"black"))
     app.obstacleDictionary[2].append(rectangle(450,450,630,570,"green"))
+    app.gates = []
     for level in range(3):
         app.obstacleDictionary[level].append(rectangle(0,0,app.width,30,"grey"))
         app.obstacleDictionary[level].append(rectangle(0,app.height-30,app.width,app.height,"grey"))
         app.obstacleDictionary[level].append(rectangle(0,30,30,app.height-30,"grey"))
-        app.obstacleDictionary[level].append(rectangle(app.width-30, app.height/3, app.width, app.height*2/3, "lime"))
+        levelGate = gate(app.width-30, app.height/3, app.width, app.height*2/3, "lime")
+        app.obstacleDictionary[level].append(levelGate)
+        app.gates.append(levelGate)
         app.obstacleDictionary[level].append(rectangle(app.width-30,30,app.width,app.height/3,"grey"))
         app.obstacleDictionary[level].append(rectangle(app.width-30, app.height*2/3, app.width, app.height-30, "grey"))
+    for level in range(3):
+        badPoints = []
+        for row in range(len(app.gridPoints)):
+            for col in range(len(app.gridPoints[0])):
+                x1,y1 = app.gridPoints[row][col]
+                for obstacle in app.obstacleDictionary[level]:
+                    if obstacle.pointInRectangle(x1,y1):
+                        badPoints.append((row,col))
+        row,col = getOneRandomPoint(app, badPoints)
+        x = 60*(col+1)
+        y = 60*(row+1)
+        print(x,y)
+        app.keyPosition[level] = (x,y)
     ####   Enemies 
     # Level 0
     # app,fill, speed
@@ -883,6 +938,12 @@ def drawWinScreen(app, canvas):
     canvas.create_rectangle(0,0,app.width,app.height, fill = "Blue")
     canvas.create_text(app.width/2,app.height/2, text =  "You Win!", fill = "Yellow", font = "Arial 54 bold")
 
+def drawKey(app, canvas):
+    if not app.hasKeyDictionary[app.level]:
+        x,y = app.keyPosition[app.level]
+        canvas.create_oval(x-10, y-10, x+10, y+10, fill = "Yellow")
+
+
 
 def redrawAll(app, canvas):
     if app.level == 4: 
@@ -897,9 +958,10 @@ def redrawAll(app, canvas):
         for enemy in app.enemyDictionary[app.level]:
             enemy.draw(canvas)
         app.player.draw(canvas)
-        '''for row in range(len(app.gridPoints)):
+        for row in range(len(app.gridPoints)):
             for col in range(len(app.gridPoints[0])):
                 x,y = app.gridPoints[row][col]
-                canvas.create_oval(x-5,y-5,x+5,y+5,fill = "red")'''
+                canvas.create_oval(x-5,y-5,x+5,y+5,fill = "red")
+        drawKey(app, canvas)
         drawTime(app, canvas)
 runApp(width=900, height=600)
