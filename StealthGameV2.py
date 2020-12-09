@@ -247,8 +247,10 @@ class Entity(object):
         dy *= self.speed
         newX=x+dx
         newY=y+dy
-        if (newY-self.radius > (app.height/3) and newY+self.radius < (app.height*2/3) and newX+self.radius > (app.width-35) and app.gates[app.level].fill == "lime"):
+        if (newY-self.radius > (app.height/3) and newY+self.radius < (app.height*2/3) and newX+self.radius > (app.width-35) and app.level <= 2 and app.gates[app.level].fill == "lime"):
             changeLevel(app)
+            app.totalTime += 15
+            app.bonusTimeStart = time.time()
             return
         if (newY-self.radius < 0 or newY +self.radius > app.height or 
                 newX -self.radius < 0 or newX+self.radius > app.width):
@@ -298,18 +300,22 @@ class Player(Entity):
 
 class Enemy(Entity):
     PlayersLKP = (0,0)
-    def __init__(self,app,fill, speed, level):
+    def __init__(self,app,fill, speed, level, path = None):
         super().__init__(fill,speed)
         self.state = "patrolling"
         self.level=level
-        self.patrolPath = []
-        self.constructPath(app)
-        self.path = []
-        for node in self.patrolPath:
-            row,col = node.rowCol
-            x = (col+1)*60
-            y = (row+1)*60
-            self.path.append((x,y))
+        if path is None:
+            self.patrolPath = []
+            self.constructPath(app)
+            self.path = []
+            for node in self.patrolPath:
+                row,col = node.rowCol
+                x = (col+1)*60
+                y = (row+1)*60
+                self.path.append((x,y))
+        else:
+            self.patrolPath = path
+            self.path = path
         self.patrolPath = self.path
         self.chaseCount = 0
         self.isDetected = False
@@ -445,7 +451,7 @@ class Enemy(Entity):
 
     def turn(self,dAngle):
         self.faceAngle=fixAngle(self.faceAngle+dAngle) 
-        if fixAngle(abs(self.rawTurnAngle-self.faceAngle)) <= 0.01:
+        if abs(fixAngle(self.rawTurnAngle-self.faceAngle)) <= 0.01:
             self.turnComplete = True
     
     def move(self, px, py, distance, app):
@@ -474,7 +480,7 @@ class Enemy(Entity):
             newX = x
             newY = y
         self.position = newX,newY
-
+############################################## inspired from pseudocode from https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2
     def determinePathBetween2GridPoints(self, app, startRow, startCol, endRow, endCol, badPoints, dirs, constructing = False):
         openList = []
         closedList = []
@@ -501,11 +507,13 @@ class Enemy(Entity):
         while openList != []:
             currentNode = openList[0]
             currentIndex = 0
+            ######################### This section was slightly modified from https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2
             for i in range(len(openList)):
                 checkNode = openList[i]
                 if checkNode.f < currentNode.f:
                     currentNode = checkNode
                     currentIndex = i
+            ###########################################################################################################################################
             inClosedList = False
             for node in closedList:
                 if node == currentNode:
@@ -519,11 +527,13 @@ class Enemy(Entity):
             closedList.append(currentNode)
 
             if currentNode == endNode:
+                ######################### This section was taken from https://medium.com/@nicholas.w.swift/easy-a-star-pathfinding-7e6689c7f7b2
                 pathNode = currentNode
                 path = []
                 while pathNode is not None:
                     path.append(pathNode)
                     pathNode = pathNode.parent
+                #########################################################################################################################################################
                 if constructing:
                     self.patrolPath = path[::-1]
                 if self.state == "searching":
@@ -778,17 +788,21 @@ class Enemy(Entity):
                 return
 
 def timerFired(app):
+    if app.level == -1:
+        return
     if app.level == 5:
         return
     determineVisionCones(app)
     for enemy in app.enemyDictionary[app.level]:
         enemy.behave(app)
-    timeReduction = int(((time.time()-app.ogTime)+app.timePenalty)//1)
-    app.timeLeft = app.totalTime-timeReduction
+    if app.level >=0 and app.level <= 2:
+        timeReduction = int(((time.time()-app.ogTime)+app.timePenalty)//1)
+        app.timeLeft = app.totalTime-timeReduction
     if app.timeLeft <= 0:
         app.level = 4
-    if app.player.checkForKey(app.keyPosition[app.level]):
-        app.hasKeyDictionary[app.level] = True
+    if app.level >= 0 and app.level <= 2:
+        if app.player.checkForKey(app.keyPosition[app.level]):
+            app.hasKeyDictionary[app.level] = True
     if app.level <= 2:
         thisGate = app.gates[app.level]     
         thisGate.checkForKey(app)
@@ -803,24 +817,26 @@ def changeLevel(app):
 
 
 def mousePressed(app, event):
-    print(event.x, event.y)
-    for enemy in app.enemyDictionary[app.level]:
-        x1,y1 = enemy.position
-        if getDistance(event.x,event.y,x1,y1) <= enemy.radius:
-            enemy.dumpState()
+    if app.level >=0 and app.level < 2:
+        for enemy in app.enemyDictionary[app.level]:
+            x1,y1 = enemy.position
+            if getDistance(event.x,event.y,x1,y1) <= enemy.radius:
+                enemy.dumpState()
 
 def appStarted(app):
+    resetApp(app)
+
+def resetApp(app):
     app.gridPoints = []
     for y in range(1,app.height//60):
         row = []
         for x in range(1,app.width//60):
             row.append((x*60,y*60))
         app.gridPoints.append(row)
-    app.ogTime = time.time()
     app.timeLeft = 0
     app.score = 0
     app.player = Player("blue",10)
-    app.level = 0
+    app.level = -1
     app.timerDelay = 60
     app.timeFill = "black"
     app.timePenalty = 0
@@ -833,7 +849,7 @@ def appStarted(app):
     app.obstacleDictionary = {0: [], 1:[], 2:[], 4:[], 5:[]}
     app.keyPosition = {0: 0, 1:0, 2:0, 3:0, 4:0, 5:0}
     app.hasKeyDictionary = {0:False, 1:False, 2:False, 3:False, 4: False, 5:False}
-    app.totalTime = 10000
+    app.totalTime = 60
     ####  Obstacles [shape, [coordinates], color]
     app.obstacleDictionary[0].append(rectangle(150,150,750,210,"blue"))
     app.obstacleDictionary[0].append(rectangle(390,270,630,510,"green"))
@@ -842,8 +858,8 @@ def appStarted(app):
     app.obstacleDictionary[1].append(rectangle(450,450,690,570,"blue"))
     app.obstacleDictionary[1].append(rectangle(150,205,270,570,"green"))
     
-    app.obstacleDictionary[2].append(rectangle(630,90,750,570,"red"))
-    app.obstacleDictionary[2].append(rectangle(210,30,390,390,"black"))
+    app.obstacleDictionary[2].append(rectangle(630,180,750,570,"red"))
+    app.obstacleDictionary[2].append(rectangle(210,120,390,390,"black"))
     app.obstacleDictionary[2].append(rectangle(450,450,630,570,"green"))
     app.gates = []
     for level in range(3):
@@ -866,8 +882,8 @@ def appStarted(app):
         row,col = getOneRandomPoint(app, badPoints)
         x = 60*(col+1)
         y = 60*(row+1)
-        print(x,y)
         app.keyPosition[level] = (x,y)
+    app.bonusTimeStart = None
     ####   Enemies 
     # Level 0
     # app,fill, speed
@@ -877,12 +893,6 @@ def appStarted(app):
         app.enemyDictionary[1].append(Enemy(app, color, 15,1))
     for color in ["red","green","yellow", "lime", "black"]:
         app.enemyDictionary[2].append(Enemy(app, color, 20,2))
-    #app.enemyDictionary[0].append(Enemy("yellow", "wrapped",
-    #    [(120,480),(300, 480),(300,540),(120,540)],15))
-    #app.enemyDictionary[0].append(Enemy("Blue","wrapped",[(41,343),(537,343)],8))
-    #app.enemyDictionary[0].append(Enemy("green", "wrapped",
-    #    [(60,540),(840,540)],10))
-    #app.enemyDictionary[0].append(Enemy("Blue", "wrapped", [(480, 540), (540, 540), (600, 540), (660, 540), (660, 480), (660, 420), (660, 360), (660, 300), (660, 240), (720, 240), (780, 240), (780, 180), (780, 120), (780, 60), (720, 60), (660, 60), (600, 60), (540, 60), (480, 60)], 15))
     
 
 
@@ -896,6 +906,9 @@ def determineVisionCones(app):
         app.player.isDetected = True
         app.timeFill ="red"
         app.timePenalty+=1
+    elif (app.bonusTimeStart is not None) and time.time()-app.bonusTimeStart <= 3:
+        app.player.isDetected = False
+        app.timeFill = "lime"
     else:
         app.player.isDetected = False
         app.timeFill = "black"
@@ -913,7 +926,11 @@ def drawTime(app, canvas):
             
 def keyPressed(app, event):
     direction = None
-    if event.key == "Up":
+    if app.level == -1:
+        if event.key == "s":
+            changeLevel(app)
+            app.ogTime = time.time()
+    elif event.key == "Up":
         direction = (0,-1)
     elif event.key == "Down":
         direction = (0,1)
@@ -923,7 +940,9 @@ def keyPressed(app, event):
         direction = (-1,0)
     if direction != None:
         app.player.move(direction,app)
-    elif event.key == "k":
+    if event.key == "r":
+        resetApp(app)
+    if event.key == "k" and app.level != -1:
         changeLevel(app)
 
 def drawObstacles(app, canvas):
@@ -943,10 +962,17 @@ def drawKey(app, canvas):
         x,y = app.keyPosition[app.level]
         canvas.create_oval(x-10, y-10, x+10, y+10, fill = "Yellow")
 
-
+def drawStartScreen(app, canvas):
+    margin = 30
+    canvas.create_rectangle(0,0,app.width,app.height, fill = "maroon")
+    canvas.create_rectangle(margin,margin, app.width-margin, app.height-margin, fill = "Grey")
+    canvas.create_text(app.width/2, app.height/3, fill = "maroon", text = "Stealth Escape", font = "times 46 bold")
+    canvas.create_text(app.width/2, app.height*2/3, fill = "maroon", text = "Press S to Start")
 
 def redrawAll(app, canvas):
-    if app.level == 4: 
+    if app.level == -1:
+        drawStartScreen(app, canvas)
+    elif app.level == 4: 
         drawLoseScreen(app,canvas)
     elif app.level == 5:
         drawWinScreen(app, canvas)
@@ -958,10 +984,6 @@ def redrawAll(app, canvas):
         for enemy in app.enemyDictionary[app.level]:
             enemy.draw(canvas)
         app.player.draw(canvas)
-        for row in range(len(app.gridPoints)):
-            for col in range(len(app.gridPoints[0])):
-                x,y = app.gridPoints[row][col]
-                canvas.create_oval(x-5,y-5,x+5,y+5,fill = "red")
         drawKey(app, canvas)
         drawTime(app, canvas)
 runApp(width=900, height=600)
